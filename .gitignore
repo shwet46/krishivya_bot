@@ -1,0 +1,39 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+credentials.json
+
+# Environment variables and secrets
+.env
+*.env
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.coverage
+coverage.xml
+
+# Tool caches
+.cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
