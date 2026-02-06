@@ -89,15 +89,22 @@ def detect_language(text: str) -> str:
     """
     if not text:
         return "en-IN"
-    
+
     # Count Devanagari characters
     devanagari_count = sum(
         1 for ch in text if '\u0900' <= ch <= '\u097F'
     )
-    
-    if (devanagari_count / len(text)) > 0.2:
-        return "hi-IN"
-    
+
+    # Heuristic: If Devanagari and contains typical Marathi words, return mr-IN
+    marathi_keywords = ["आहे", "नाही", "होय", "कृपया", "माझे", "तुमचे", "आपण"]
+    if devanagari_count > 0:
+        marathi_count = sum(1 for word in marathi_keywords if word in text)
+        if marathi_count > 0:
+            return "mr-IN"
+        # If not Marathi, assume Hindi for Devanagari
+        if (devanagari_count / len(text)) > 0.2:
+            return "hi-IN"
+
     return "en-IN"
 
 
@@ -211,6 +218,7 @@ def tts_process(text: str) -> bytes:
     voice_map = {
         "hi-IN": "hi-IN-Wavenet-D",
         "en-IN": "en-IN-Wavenet-D",
+        "mr-IN": "mr-IN-Wavenet-A",  # Marathi voice
     }
     
     try:
@@ -225,7 +233,7 @@ def tts_process(text: str) -> bytes:
             input=texttospeech.SynthesisInput(text=text),
             voice=texttospeech.VoiceSelectionParams(
                 language_code=lang,
-                name=voice_map[lang],
+                name=voice_map.get(lang, "en-IN-Wavenet-D"),
             ),
             audio_config=texttospeech.AudioConfig(
                 audio_encoding=texttospeech.AudioEncoding.MP3,
