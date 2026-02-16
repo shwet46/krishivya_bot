@@ -218,7 +218,7 @@ def tts_process(text: str) -> bytes:
     voice_map = {
         "hi-IN": "hi-IN-Wavenet-D",
         "en-IN": "en-IN-Wavenet-D",
-        "mr-IN": "mr-IN-Wavenet-A",  # Marathi voice
+        "mr-IN": "mr-IN-Wavenet-A",
     }
     
     try:

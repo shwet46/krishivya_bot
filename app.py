@@ -34,12 +34,5 @@ def home():
     return "AgriSaathi Telegram Bot is running!"
 
 if __name__ == "__main__":
-    public_url = ngrok.connect(5000).public_url
-    print("Public URL:", public_url)
-    webhook_url = f"{public_url}/telegram"
-    requests.get(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
-        params={"url": webhook_url},
-    )
-
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
