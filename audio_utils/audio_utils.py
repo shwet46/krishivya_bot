@@ -41,14 +41,17 @@ def ogg_to_wav(ogg_bytes: bytes):
 
 def mp3_to_ogg(mp3_bytes: bytes):
     """
-    Convert MP3 audio to OGG format with Opus codec for Telegram.
+    Convert input audio bytes (MP3/WAV) to OGG Opus format for Telegram.
     """
     if not mp3_bytes:
         raise ValueError("Input MP3 bytes are empty")
     
     try:
-        # Load MP3 audio
-        audio = AudioSegment.from_file(io.BytesIO(mp3_bytes), format="mp3")
+        # Try MP3 first, then WAV (Sarvam returns WAV base64 by default).
+        try:
+            audio = AudioSegment.from_file(io.BytesIO(mp3_bytes), format="mp3")
+        except Exception:
+            audio = AudioSegment.from_file(io.BytesIO(mp3_bytes), format="wav")
         ogg_io = io.BytesIO()
         audio.export(
             ogg_io, 

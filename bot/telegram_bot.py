@@ -1,12 +1,10 @@
 import requests
-import io
-import json
 from datetime import datetime, timedelta
 from flask import Blueprint, request
 from audio_utils.audio_utils import mp3_to_ogg
-from vertexai.generative_models import Part
 
 telegram_bp = Blueprint("telegram_bot", __name__)
+VOICE_PROCESSING_PAUSED = True
 
 
 def send_scheduled_reminder(chat_id, message_text):
@@ -23,29 +21,18 @@ def send_scheduled_reminder(chat_id, message_text):
 
 
 def parse_and_schedule_reminder(chat_id, user_text):
-    """Use Gemini to extract task and time, then schedule if found."""
+    """Use Sarvam text API to extract task and time, then schedule if found."""
     from app import scheduler
-    from bot.rag import model
+    from llm_processing.llm_service import parse_reminder_request
 
-    prompt = f"""
-    Extact the 'task' and 'delay_seconds' from this agricultural reminder request.
-    Today's date/time is: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-    
-    Rules:
-    1. If user says 'tomorrow' at 10 AM, calculate seconds from now to tomorrow 10 AM.
-    2. If user says 'in 5 minutes', delay_seconds is 300.
-    3. Return ONLY a JSON object with 'task' and 'delay_seconds'.
-    4. If no clear time is found, return {{"task": null, "delay_seconds": 0}}.
-    
-    User request: "{user_text}"
-    """
     try:
-        response = model.generate_content(prompt)
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(text)
+        data = parse_reminder_request(
+            user_text=user_text,
+            now_text=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        )
 
         task = data.get("task")
-        delay = data.get("delay_seconds")
+        delay = int(data.get("delay_seconds") or 0)
 
         if task and delay > 0:
             job_id = f"reminder_{chat_id}_{datetime.now().timestamp()}"
@@ -68,7 +55,7 @@ def telegram_webhook():
     from app import (
         TELEGRAM_TOKEN,
     )
-    from bot.rag import model, WELCOME_MESSAGE
+    from llm_processing.llm_service import WELCOME_MESSAGE, generate_response
     from audio_utils.stt_tts import stt_process, tts_process
 
     data = request.json
@@ -96,50 +83,59 @@ def telegram_webhook():
         img_bytes = requests.get(img_url).content
 
         try:
-            # Multi-modal input 
-            image_part = Part.from_data(data=img_bytes, mime_type="image/jpeg")
-            response = model.generate_content([user_query, image_part])
-            reply = response.text
+            reply = generate_response(user_query, image_bytes=img_bytes)
         except Exception as e:
             print(f"Vision error: {e}")
             reply = "I'm sorry, I couldn't process the photo. Please ensure it's a clear shot of the crop."
 
         send_telegram_message(TELEGRAM_TOKEN, chat_id, reply)
 
-    # VOICE HANDLER
-    elif "voice" in message:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatAction",
-                      data={"chat_id": chat_id, "action": "record_voice"})
-        
-        file_id = message["voice"]["file_id"]
-        file_info = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
-                                 params={"file_id": file_id}).json()
-        audio_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info['result']['file_path']}"
-        ogg_bytes = requests.get(audio_url).content
-
-        try:
-            user_text = stt_process(ogg_bytes)
-            ai_reply = None
-            if any(word in user_text.lower() for word in ["remind", "re-mind", "yaad dilao", "remember"]):
-                ai_reply = parse_and_schedule_reminder(chat_id, user_text)
-            
-            if not ai_reply:
-                ai_reply = model.generate_content(user_text).text
-
-            mp3_audio = tts_process(ai_reply)
-            ogg_audio = mp3_to_ogg(mp3_audio)
-
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVoice",
-                data={"chat_id": chat_id},
-                files={"voice": ("reply.ogg", ogg_audio)},
+    # VOICE/AUDIO HANDLER
+    elif "voice" in message or "audio" in message:
+        if VOICE_PROCESSING_PAUSED:
+            send_telegram_message(
+                TELEGRAM_TOKEN,
+                chat_id,
+                "Krishivya is resting now, please text only.",
             )
-            if "redirecting this query to the nearest Agriculture Officer" in ai_reply:
-                handle_human_escalation(chat_id, user_text)
+        else:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatAction",
+                          data={"chat_id": chat_id, "action": "record_voice"})
 
-        except Exception as e:
-            print("Voice error:", e)
-            send_telegram_message(TELEGRAM_TOKEN, chat_id, "I heard you, but my voice system is resting. Here's my reply: " + ai_reply)
+            if "voice" in message:
+                file_id = message["voice"]["file_id"]
+            else:
+                file_id = message["audio"]["file_id"]
+
+            file_info = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
+                                     params={"file_id": file_id}).json()
+            audio_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info['result']['file_path']}"
+            ogg_bytes = requests.get(audio_url).content
+
+            try:
+                user_text = stt_process(ogg_bytes)
+                ai_reply = None
+                if any(word in user_text.lower() for word in ["remind", "re-mind", "yaad dilao", "remember"]):
+                    ai_reply = parse_and_schedule_reminder(chat_id, user_text)
+
+                if not ai_reply:
+                    ai_reply = generate_response(user_text)
+
+                mp3_audio = tts_process(ai_reply)
+                ogg_audio = mp3_to_ogg(mp3_audio)
+
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVoice",
+                    data={"chat_id": chat_id},
+                    files={"voice": ("reply.ogg", ogg_audio)},
+                )
+                if "redirecting this query to the nearest Agriculture Officer" in ai_reply:
+                    handle_human_escalation(chat_id, user_text)
+
+            except Exception as e:
+                print("Voice error:", e)
+                fallback_reply = ai_reply or "I heard you, but I could not generate a voice response right now."
+                send_telegram_message(TELEGRAM_TOKEN, chat_id, "I heard you, but my voice system is resting. Here's my reply: " + fallback_reply)
 
     # TEXT HANDLER 
     elif "text" in message:
@@ -154,7 +150,7 @@ def telegram_webhook():
             if any(word in user_text.lower() for word in ["remind", "re-mind", "yaad dilao", "remember"]):
                 reply = parse_and_schedule_reminder(chat_id, user_text)
             if not reply:
-                reply = model.generate_content(user_text).text
+                reply = generate_response(user_text)
         
         send_telegram_message(TELEGRAM_TOKEN, chat_id, reply)
 

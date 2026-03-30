@@ -1,51 +1,124 @@
+"""RAG compatibility module with optional Pinecone retrieval.
+
+LLM processing logic primarily lives in llm_processing/llm_service.py.
+RAG retrieval is intentionally paused by default and can be enabled with env vars.
+"""
+
+from __future__ import annotations
+
 import os
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
-from dotenv import load_dotenv
+from typing import Any
 
-load_dotenv()
+from llm_processing import llm_service
+from llm_processing.llm_service import WELCOME_MESSAGE, parse_reminder_request
 
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-GCP_REGION = os.getenv("GCP_REGION", "asia-south1")
+# Keep RAG paused unless explicitly enabled.
+RAG_PROCESSING_PAUSED = os.getenv("RAG_PROCESSING_PAUSED", "true").lower() == "true"
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "")
+PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "agriculture")
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "4"))
 
-vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
 
-SYSTEM_PROMPT = """You are Krishivya, a knowledgeable and empathetic Indian Female Agriculture Officer. 
-Speak in a polite, professional, and helpful female tone.
+def _pinecone_index() -> Any | None:
+    """Create a Pinecone index handle if config is available."""
+    if RAG_PROCESSING_PAUSED:
+        return None
+    if not PINECONE_API_KEY or not PINECONE_INDEX_NAME:
+        return None
 
-CORE CAPABILITIES:
-1. Multimodal Crop Diagnosis: If a user sends an image, analyze it alongside any provided text description to identify pests, diseases, or nutrient deficiencies. Always consider the user's description (e.g., "sown 10 days ago") as vital context for your diagnosis. Provide organic and chemical remedies.
-2. Farming Advice: Answer questions ONLY about farming, soil, weather, and government schemes.
-3. Multilingual: Detect the user's language and respond in the same language.
-4. Agricultural Reminders: You can help farmers stay organized. If a user asks to be reminded of a task (e.g., "Remind me to spray fertilizer tomorrow at 10 AM"), confirm the activity and the time.
+    try:
+        from pinecone import Pinecone
+    except Exception as exc:
+        print(f"[RAG] Pinecone SDK unavailable: {exc}")
+        return None
 
-ESCALATION RULE:
-If a query is complex, involves high-risk pesticide chemicals, or if you are unsure of the diagnosis from an image, explicitly tell the user: 
-"I am redirecting this query to the nearest Agriculture Officer for expert verification. They will contact you shortly."
-Trigger this whenever you cannot provide a 100% certain answer.
-"""
+    try:
+        client = Pinecone(api_key=PINECONE_API_KEY)
+        return client.Index(PINECONE_INDEX_NAME)
+    except Exception as exc:
+        print(f"[RAG] Failed to initialize Pinecone index: {exc}")
+        return None
 
-WELCOME_MESSAGE = """🌾 Namaste!
-I'm Krishivya, your AI Agriculture Officer.
 
-Ask me about crops, soil, fertilizers, weather, or farming practices.
-You can send text or voice messages in your language.
-"""
+def query_pinecone_context(user_input: str, query_vector: list[float] | None = None) -> list[str]:
+    """Return top context chunks from Pinecone for the user query.
 
-model = GenerativeModel(
-    "gemini-2.5-flash",
-    system_instruction=SYSTEM_PROMPT,
-)
-
-def generate_response(user_input, image_bytes=None):
+    RAG is paused by default. Also, this function expects a precomputed embedding
+    vector for now and does not generate embeddings internally yet.
     """
-    Generate a response using the Gemini model.
-    Supports both text and multimodal (image) input.
-    """
+    if RAG_PROCESSING_PAUSED:
+        return []
+    if not user_input.strip() or not query_vector:
+        return []
+
+    index = _pinecone_index()
+    if index is None:
+        return []
+
+    try:
+        result = index.query(
+            vector=query_vector,
+            top_k=RAG_TOP_K,
+            include_metadata=True,
+            namespace=PINECONE_NAMESPACE,
+        )
+    except Exception as exc:
+        print(f"[RAG] Pinecone query failed: {exc}")
+        return []
+
+    chunks: list[str] = []
+    for match in (result.get("matches") or []):
+        metadata = match.get("metadata") or {}
+        chunk = metadata.get("text") or metadata.get("chunk") or metadata.get("content")
+        if chunk:
+            chunks.append(str(chunk).strip())
+    return [c for c in chunks if c]
+
+
+def _build_rag_context(chunks: list[str]) -> str:
+    if not chunks:
+        return ""
+    lines = [f"[{i}] {chunk}" for i, chunk in enumerate(chunks, start=1)]
+    return "\n".join(lines)
+
+
+def generate_response(
+    user_input: str,
+    image_bytes: bytes | None = None,
+    query_vector: list[float] | None = None,
+) -> str:
+    """Generate response with optional Pinecone context when RAG is enabled."""
     if image_bytes:
-        image_part = Part.from_data(data=image_bytes, mime_type="image/jpeg")
-        response = model.generate_content([user_input, image_part])
-    else:
-        response = model.generate_content(user_input)
-    
-    return response.text
+        return llm_service.generate_response(user_input, image_bytes=image_bytes)
+
+    rag_chunks = query_pinecone_context(user_input=user_input, query_vector=query_vector)
+    if not rag_chunks:
+        return llm_service.generate_response(user_input)
+
+    rag_context = _build_rag_context(rag_chunks)
+    prompt = (
+        "Use the retrieved agriculture context below if relevant. "
+        "If context is not relevant, ignore it and answer normally.\n\n"
+        f"Retrieved context:\n{rag_context}\n\n"
+        f"User question:\n{user_input}"
+    )
+
+    try:
+        return llm_service._call_sarvam(
+            [
+                {"role": "system", "content": llm_service.SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+        )
+    except Exception:
+        return llm_service.generate_response(user_input)
+
+
+__all__ = [
+    "WELCOME_MESSAGE",
+    "generate_response",
+    "parse_reminder_request",
+    "query_pinecone_context",
+    "RAG_PROCESSING_PAUSED",
+]
