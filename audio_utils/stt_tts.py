@@ -12,12 +12,14 @@ SARVAM_STT_API_URL = os.getenv("SARVAM_STT_API_URL", "https://api.sarvam.ai/spee
 SARVAM_TTS_API_URL = os.getenv("SARVAM_TTS_API_URL", "https://api.sarvam.ai/text-to-speech")
 SARVAM_STT_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v3")
 SARVAM_TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
-SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "shubh")
+SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "meera")
 
 OPEN_SOURCE_STT_MODEL = os.getenv("OPEN_SOURCE_STT_MODEL", "openai/whisper-tiny")
 OPEN_SOURCE_TTS_MODEL_EN = os.getenv("OPEN_SOURCE_TTS_MODEL_EN", "facebook/mms-tts-eng")
 OPEN_SOURCE_TTS_MODEL_HI = os.getenv("OPEN_SOURCE_TTS_MODEL_HI", "facebook/mms-tts-hin")
 OPEN_SOURCE_TTS_MODEL_MR = os.getenv("OPEN_SOURCE_TTS_MODEL_MAR", "facebook/mms-tts-mar")
+OPEN_SOURCE_TTS_MODEL_PA = os.getenv("OPEN_SOURCE_TTS_MODEL_PAN", "facebook/mms-tts-pan")
+OPEN_SOURCE_TTS_MODEL_BN = os.getenv("OPEN_SOURCE_TTS_MODEL_BEN", "facebook/mms-tts-ben")
 
 _LOCAL_ASR_PIPELINE = None
 _LOCAL_TTS_MODELS: dict[str, tuple[Any, Any]] = {}
@@ -124,10 +126,20 @@ def detect_language(text: str) -> str:
     if not text:
         return "en-IN"
 
-    # Count Devanagari characters
-    devanagari_count = sum(
-        1 for ch in text if '\u0900' <= ch <= '\u097F'
-    )
+    # Count characters for different scripts
+    devanagari_count = sum(1 for ch in text if '\u0900' <= ch <= '\u097F')
+    gurmukhi_count = sum(1 for ch in text if '\u0A00' <= ch <= '\u0A7F')
+    bengali_count = sum(1 for ch in text if '\u0980' <= ch <= '\u09FF')
+    
+    total_len = len(text.strip())
+    if total_len == 0:
+        return "en-IN"
+
+    if (bengali_count / total_len) > 0.2:
+        return "bn-IN"
+        
+    if (gurmukhi_count / total_len) > 0.2:
+        return "pa-IN"
 
     # Heuristic: If Devanagari and contains typical Marathi words, return mr-IN
     marathi_keywords = ["आहे", "नाही", "होय", "कृपया", "माझे", "तुमचे", "आपण"]
@@ -136,7 +148,7 @@ def detect_language(text: str) -> str:
         if marathi_count > 0:
             return "mr-IN"
         # If not Marathi, assume Hindi for Devanagari
-        if (devanagari_count / len(text)) > 0.2:
+        if (devanagari_count / total_len) > 0.2:
             return "hi-IN"
 
     return "en-IN"
@@ -269,8 +281,11 @@ def _resolve_local_tts_model(lang_code: str) -> str:
         return OPEN_SOURCE_TTS_MODEL_HI
     if lang_code == "mr-IN":
         return OPEN_SOURCE_TTS_MODEL_MR
+    if lang_code == "pa-IN":
+        return OPEN_SOURCE_TTS_MODEL_PA
+    if lang_code == "bn-IN":
+        return OPEN_SOURCE_TTS_MODEL_BN
     return OPEN_SOURCE_TTS_MODEL_EN
-
 
 def _get_local_tts_bundle(model_id: str):
     if model_id in _LOCAL_TTS_MODELS:

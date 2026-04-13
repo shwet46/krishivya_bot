@@ -4,7 +4,7 @@ from flask import Blueprint, request
 from audio_utils.audio_utils import mp3_to_ogg
 
 telegram_bp = Blueprint("telegram_bot", __name__)
-VOICE_PROCESSING_PAUSED = True
+VOICE_PROCESSING_PAUSED = False
 
 
 def send_scheduled_reminder(chat_id, message_text):

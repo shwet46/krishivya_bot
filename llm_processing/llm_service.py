@@ -9,7 +9,7 @@ load_dotenv()
 
 FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY", "")
 FEATHERLESS_API_URL = os.getenv("FEATHERLESS_API_URL", "https://api.featherless.ai/v1/chat/completions")
-FEATHERLESS_MULTIMODAL_MODEL = os.getenv("FEATHERLESS_MULTIMODAL_MODEL", "google/gemma-3-27b-it")
+FEATHERLESS_MULTIMODAL_MODEL = os.getenv("FEATHERLESS_MULTIMODAL_MODEL", "meta-llama/Llama-3.2-11B-Vision-Instruct")
 
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_CHAT_API_URL = os.getenv("SARVAM_CHAT_API_URL", "https://api.sarvam.ai/chat/completions")
