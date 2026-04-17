@@ -11,6 +11,7 @@ venv/
 env/
 
 credentials.json
+sam-sang-493608-e1caea58504e.json
 
 # Environment variables and secrets
 .env
